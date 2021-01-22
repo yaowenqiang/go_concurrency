@@ -3,24 +3,42 @@ package main
 import (
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/caser/gophernews"
+	"github.com/jzelinskie/geddit"
 )
 
-// var redditSession *geddit.LoginSession
+var redditSession *geddit.LoginSession
 var hackerNewsClient *gophernews.Client
+
+func getHnStoryDetails(id int, c chan<- Story, wg *sync.WaitGroup) {
+	defer wg.Done()
+	story, err := hackerNewsClient.GetStory(id)
+	if err != nil {
+		return
+	}
+	newStory := Story{
+		title:  story.Title,
+		url:    story.URL,
+		author: story.By,
+		source: "hackerNews",
+	}
+
+	c <- newStory
+}
 
 func init() {
 	hackerNewsClient = gophernews.NewClient()
 
-	// var err error
+	var err error
 
-	// redditSession, err = geddit.NewLoginSession("user", "pass", "ua")
+	redditSession, err = geddit.NewLoginSession("user", "pass", "gopher")
 
-	// if err != nil {
-	// 	fmt.Println(err)
-	// 	os.Exit(1)
-	// }
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 }
 
 //Story is the story struct of hacker news and reddit
@@ -31,70 +49,66 @@ type Story struct {
 	source string
 }
 
-func newHnStories() []Story {
-	var stories []Story
-
+func newHnStories(c chan<- Story) {
+	defer close(c)
 	changes, err := hackerNewsClient.GetChanges()
 	if err != nil {
 		fmt.Println(err)
-		return nil
+		return
 	}
+
+	var wg sync.WaitGroup
 
 	for _, id := range changes.Items {
-		story, err := hackerNewsClient.GetStory(id)
-		if err != nil {
-			continue
-		}
-		newStory := Story{
-			title:  story.Title,
-			url:    story.URL,
-			author: story.By,
-			source: "hackerNews",
-		}
-
-		stories = append(stories, newStory)
+		wg.Add(1)
+		go getHnStoryDetails(id, c, &wg)
 	}
-
-	return stories
+	wg.Wait()
 }
 
-// func newRedditStories() []Story {
-// 	var stories []Story
-// 	sort := geddit.PopularitySort(geddit.NewSubmissions)
-// 	var listingOptions geddit.ListingOptions
-// 	submissions, err := redditSession.SubredditSubmissions("programming", sort, listingOptions)
-// 	if err != nil {
-// 		fmt.Println(err)
-// 		return nil
-// 	}
-
-// 	for _, s := range submissions {
-// 		newStory := Story{
-// 			title:  s.Title,
-// 			url:    s.URL,
-// 			author: s.Author,
-// 			source: "Reddit /r/programming",
-// 		}
-
-// 		stories = append(stories, newStory)
-// 	}
-// 	return stories
-// }
-
-func main() {
-	hnStories := newHnStories()
-
-	// redditStories := newRedditStories()
-
-	var stories []Story
-
-	if hnStories != nil {
-		stories = append(stories, hnStories...)
+func newRedditStories(c chan<- Story) {
+	defer close(c)
+	sort := geddit.PopularitySort(geddit.NewSubmissions)
+	var listingOptions geddit.ListingOptions
+	submissions, err := redditSession.SubredditSubmissions("programming", sort, listingOptions)
+	if err != nil {
+		fmt.Println(err)
+		return
 	}
 
-	// if redditStories != nil {
-	// 	stories = append(stories, redditStories...)
-	// }
+	for _, s := range submissions {
+		newStory := Story{
+			title:  s.Title,
+			url:    s.URL,
+			author: s.Author,
+			source: "Reddit /r/programming",
+		}
+		c <- newStory
+	}
+}
+
+func outputToConsole(c <-chan Story) {
+	for {
+		s := <-c
+		fmt.Printf("%s :%s\nby %s on %s\n\n", s.title, s.url, s.author, s.source)
+	}
+}
+
+func outputToFile(c <-chan Story, file *os.File) {
+	for {
+		s := <-c
+		fmt.Fprintf(file, "%s :%s\nby %s on %s\n\n", s.title, s.url, s.author, s.source)
+	}
+}
+func main() {
+	fromHn := make(chan Story, 8)
+	fromReddit := make(chan Story, 8)
+
+	toFile := make(chan Story, 8)
+	toConsole := make(chan Story, 8)
+
+	go newHnStories(fromHn)
+	go newRedditStories(fromReddit)
 
 	file, err := os.Create("stories.txt")
 
@@ -103,14 +117,29 @@ func main() {
 		os.Exit(1)
 	}
 
-	defer file.Close()
+	go outputToConsole(toConsole)
+	go outputToFile(toFile, file)
 
-	for _, s := range stories {
-		fmt.Fprintf(file, "%s : %s\nby %s on %s\n\n", s.title, s.url, s.author, s.source)
-	}
+	hnOpen := true
+	redditOpen := true
 
-	for _, s := range stories {
-		fmt.Printf("%s :%s\nby %s on %s\n\n", s.title, s.url, s.author, s.source)
+	for hnOpen || redditOpen {
+		select {
+		case story, open := <-fromHn:
+			if open {
+				toFile <- story
+				toConsole <- story
+			} else {
+				hnOpen = false
+			}
+		case story, open := <-fromReddit:
+			if open {
+				toFile <- story
+				toConsole <- story
+			} else {
+				redditOpen = false
+			}
+		}
 	}
 
 }
