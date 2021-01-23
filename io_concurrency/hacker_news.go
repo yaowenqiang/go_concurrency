@@ -7,10 +7,13 @@ import (
 
 	"github.com/caser/gophernews"
 	"github.com/jzelinskie/geddit"
+	"gopkg.in/gomail.v2"
 )
 
 var redditSession *geddit.LoginSession
 var hackerNewsClient *gophernews.Client
+var m *gomail.Message
+var d *gomail.Dialer
 
 func getHnStoryDetails(id int, c chan<- Story, wg *sync.WaitGroup) {
 	defer wg.Done()
@@ -39,6 +42,10 @@ func init() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+	m = gomail.NewMessage()
+	m.SetHeader("From", "user")
+	m.SetHeader("To", "user")
+	d = gomail.NewDialer("smtp.163.com", 465, "user", "123456")
 }
 
 //Story is the story struct of hacker news and reddit
@@ -106,6 +113,7 @@ func main() {
 
 	toFile := make(chan Story, 8)
 	toConsole := make(chan Story, 8)
+	toEmail := make(chan Story, 8)
 
 	go newHnStories(fromHn)
 	go newRedditStories(fromReddit)
@@ -119,6 +127,7 @@ func main() {
 
 	go outputToConsole(toConsole)
 	go outputToFile(toFile, file)
+	go sendMail(toEmail)
 
 	hnOpen := true
 	redditOpen := true
@@ -129,6 +138,7 @@ func main() {
 			if open {
 				toFile <- story
 				toConsole <- story
+				toEmail <- story
 			} else {
 				hnOpen = false
 			}
@@ -142,4 +152,18 @@ func main() {
 		}
 	}
 
+}
+
+func sendMail(c <-chan Story) {
+	for {
+		s := <-c
+		// m.SetAddressHeader("Cc", "dan@example.com", "Dan")
+		m.SetHeader("Subject", s.title)
+		m.SetBody("text/html", "<a href='"+s.url+"'>"+s.title+"</a>")
+		// m.Attach("/home/Alex/lolcat.jpg")
+		// Send the email to Bob, Cora and Dan.
+		if err := d.DialAndSend(m); err != nil {
+			panic(err)
+		}
+	}
 }
