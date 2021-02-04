@@ -46,28 +46,34 @@ func main() {
 }
 
 func getTtl(key string) {
-	key_type, err := rdb.Type(ctx, key).Result()
+	/*
+		key_type, err := rdb.Type(ctx, key).Result()
 
-	if err != nil {
-		panic(err)
-	}
+		if err != nil {
+			panic(err)
+		}
 
-	ttl, err := rdb.TTL(ctx, key).Result()
-	if err != nil {
-		panic(err)
-	}
-	switch ttl {
-	case -1:
-		if key_type == "string" {
-			fmt.Printf("%s %s has no ttl\n", key_type, key)
-			idel_time, err := rdb.ObjectIdleTime(ctx, key).Result()
+			ttl, err := rdb.TTL(ctx, key).Result()
 			if err != nil {
 				panic(err)
 			}
-			fmt.Printf("%s idel time is %d\n", key, idel_time/1000/1000/1000/60/60/24)
-		}
-	default:
-		//fmt.Printf("%s ttl %d \n", key, ttl)
+			switch ttl {
+			case -1:
+				if key_type == "string" {
+					fmt.Printf("%s %s has no ttl\n", key_type, key)
+					idel_time, err := rdb.ObjectIdleTime(ctx, key).Result()
+					if err != nil {
+						panic(err)
+					}
+					fmt.Printf("%s idel time is %d\n", key, idel_time/1000/1000/1000/60/60/24)
+				}
+			default:
+				//fmt.Printf("%s ttl %d \n", key, ttl)
+			}
+	*/
+	_, err := rdb.Eval(ctx, "if redis.call('ttl',KEYS[1]) == -1 then  redis.call('expire', KEYS[1], 86400) end", []string{key}, "Hello").Result()
+	if err != nil {
+		panic(err)
 	}
 	wg.Done()
 
